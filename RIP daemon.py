@@ -1,7 +1,7 @@
 """
 
 """
-import socket, os, sys, select
+import socket, os, sys, select, time
 
 MAX_PACKET_SIZE = 4096 #maximum packet size in bytes to avoid memory/RAM issues
 TIMEOUT = 15 #timeout for sockets in seconds
@@ -25,7 +25,18 @@ if len(ARGUEMENTS) != 1:
     print("filename")
     sys.exit()
 
+class row():
+    cost=1
+    next_hop=0
+
+
 class RIP_Router():
+    table = {}
+    neighbours = []
+    output_ports = None
+    input_ports = None
+    config_file = None
+    
     def close(self):
         if self.config_file:
             self.config_file.close()
@@ -36,9 +47,25 @@ class RIP_Router():
     
     def __init__(self, filename):
         self.process_config_file(filename)
-        self.init_rx_ports()
+        self.init_input_ports()
         self.run()
         self.close()
+
+
+    def create_response(self):
+        '''returns a packet in the form of bytes'''
+        pass
+    def send_response(self, packet, addr_port):
+        '''3.9.2 Response Messages'''
+        pass
+    
+    def read_response(self,data):
+        '''convert the recvd packet to a table'''
+        pass
+    
+    def update_table(self, other_table):
+        '''compare tables and update if route is better'''
+        pass
 
     def process_config_file(self, filename):
         '''
@@ -69,10 +96,10 @@ class RIP_Router():
                 if "router-id" in line:
                     self.instance_id = int(line.split()[1])
                 elif "input-ports" in line:
-                    self.rx_ports = set([int(x) for x in line[len("input-ports"):].split(",")])
+                    self.input_ports = set([int(x) for x in line[len("input-ports"):].split(",")])
                 elif "outputs" in line:
-                    self.tx_ports = [(x) for x in line[len("outputs"):].split(",")]
-            print(self.instance_id,self.rx_ports,self.tx_ports)
+                    self.output_ports = [(x) for x in line[len("outputs"):].split(",")]
+            print(self.instance_id,self.input_ports,self.output_ports)
             
         else:
             print("couldnt find", filename)
@@ -80,7 +107,7 @@ class RIP_Router():
             self.close()
 
 
-    def init_rx_ports(self):
+    def init_input_ports(self):
         '''
         Next the demon creates as many UDP sockets as it has input ports and binds one
         socket to each input port – no sockets are created for outputs, these only refer to
@@ -88,11 +115,11 @@ class RIP_Router():
         UDP datagrams to neighbors.
         '''
         self.rx_sockets = []
-        for rx_port in self.rx_ports:
+        for rx_port in self.input_ports:
             try:
                 rx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
                 rx_socket.settimeout(TIMEOUT)
-                rx_socket.bind(('192.168.1.68', rx_port))
+                rx_socket.bind(('192.168.122.1', rx_port))
                 self.rx_sockets.append(rx_socket)
             except Exception as e:
                 print("failed to create socket.", rx_port, e)
@@ -114,12 +141,38 @@ class RIP_Router():
         atomically, i.e. the processing of one event (e.g. a received packet) must not be
         interrupted by processing another event (e.g. a timer).
         '''
-        read_descriptors = [x.fileno() for x in self.rx_sockets]
-        print(read_descriptors)
-        rlist, wlist, xlist = select.select(read_descriptors, [], [])#blocks until at least one file descriptor is ready to r||w||x
-        print(rlist, wlist, xlist)
+        print("run")
+        inputs = [x.fileno() for x in self.rx_sockets]
+        print(inputs)     
+        
+        for neighbour in self.output_ports:
+            packet = self.create_response()
+            self.send_response(packet,0)
+            
+        time_remaining = 30
         while True:
             try:
+                start = time()
+                rlist, wlist, xlist = select.select(inputs, [], [], time_remaining)#blocks until at least one file descriptor is ready to r||w||x
+                end = time()
+                
+                delta_time = end - start
+                
+                if len(rlist) != 0: #no timeout
+                    time_remaining -= delta_time
+                else: #timeout
+                    time_remaining = 30 + random()
+                    for neighbour in self.output_ports:
+                        packet = self.create_response()
+                        self.send_response(packet,0)                    
+                    
+                
+                print(rlist, wlist, xlist)
+                for packet in rlist:
+                    #do something
+                    other_table = read_response(packet)
+                    update_table(other_table)
+                
                 self.close()
             except Exception as e:
                 print(e)
