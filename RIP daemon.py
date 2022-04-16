@@ -49,7 +49,7 @@ class RIP_Router():
     input_sockets = None    #list of sockets, each bound to one of the input_ports
     address = None          #local computer addr 
     instance_id = None      #router-id of running process
-
+    neighbour_info = None   #info on links to neighbour routers [output_port, cost, router_id]
     
     def close(self):
         if self.config_file:
@@ -62,7 +62,7 @@ class RIP_Router():
     def __init__(self, filename):
         self.process_config_file(filename)
         self.init_input_ports()
-        self.table[self.instance_id] = Row(0,None,self.instance_id)#init table with own entry
+        self.table[self.instance_id] = Row(0,self.instance_id,self.instance_id)#init table with own entry
         print("forwarding table:",self.table)
         self.run()
         self.close()
@@ -102,18 +102,18 @@ class RIP_Router():
         #print(packet)
         #print(type(addr_port))
         target = (self.address, addr_port)
-        print("        sending response to:",target)
+        #print("        sending response to:",target)
         self.input_sockets[0].sendto(bytes(packet),target)
 
     def send_all_responses(self):
         '''iterates all neighbour ports, and sends a response (advertisement) to each'''
-        print("    sending all neighbours a response packet")
+        #print("    sending all neighbours a response packet")
         for output_port in self.output_ports:
             self.send_response(output_port)
     
     def read_response(self,data):
         '''convert the recvd packet to a table'''
-        print("reading response..")
+        #print("reading response..")
         #data= bytearray(data)
         #print(data[2:4],int.from_bytes(data[2:4], 'big'))
         try:
@@ -125,29 +125,42 @@ class RIP_Router():
             print(e)
         recvd_table = {}
         i = 4#packet payload starts after 4 bytes
-        try:
-            addr_family_id = int.from_bytes(data[i:i+2], 'big')
-            i+=4
-            ipv4_addr = int.from_bytes(data[i:i+4], 'big')
-            i+=12
-            metric = int.from_bytes(data[i:i+4], 'big')
-            #print("recdv:",addr_family_id,ipv4_addr,metric)
-            row = Row(metric, ipv4_addr, ipv4_addr)
-            recvd_table[ipv4_addr] = row
-        except IndexError:
-            pass
-        print("  recvd table:",recvd_table)
+        while i < len(data):
+            try:
+                addr_family_id = int.from_bytes(data[i:i+2], 'big')
+                i+=4
+                ipv4_addr = int.from_bytes(data[i:i+4], 'big')
+                i+=12
+                metric = int.from_bytes(data[i:i+4], 'big')
+                #print("recdv:",addr_family_id,ipv4_addr,metric)
+                row = Row(metric, ipv4_addr, ipv4_addr)
+                recvd_table[ipv4_addr] = row
+                i+=4
+                #print(i)
+            except IndexError:
+                break
+        #print("  recvd table:",recvd_table)
         return recvd_table
     
     def update_table(self, other_table):
         '''compare tables and update if route is better'''
         for key in other_table.keys():
             try:
-                self.table[key]
+                self.table[key]               
                 #check if other_table has better route
             except KeyError:
-                self.table[key] = other_table[key]
+                #use config file neighbour links if key(id) in neighbour_ids(e.g 2 in [2])
+                neighbour_ids = [x[2] for x in self.neighbour_info]
+                if key in neighbour_ids:
+                   self.table[key] = Row(1,key,key)
+                else:
+                    self.table[key] = other_table[key]
         print("updated table:",self.table)
+
+
+
+
+
 
     def process_config_file(self, filename):
         '''
@@ -181,10 +194,13 @@ class RIP_Router():
                     self.input_ports = [int(x) for x in line[len("input-ports"):].split(",")]
                 elif "outputs" in line:
                     self.output_ports = [int(x.split('-')[0]) for x in line[len("outputs "):].split(",")]     #7002
-                    neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")][0]   #7002-1-1 (port,cost,id)
-                    port, cost, neighbour_id = neighbour_info
-                    #print(neighbour_info)
-                    self.table[neighbour_id] = Row(16,neighbour_id,neighbour_id)#cost, next_hop, id
+                    self.neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")]   #7002-1-1 (port,cost,id)
+                    #print(self.neighbour_info)
+                    for i, entry in enumerate(self.neighbour_info):
+                        for j, number in enumerate(self.neighbour_info[i]):
+                            self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
+                    print("neighbour_info",self.neighbour_info)
+
             #print(self.instance_id,self.input_ports,self.output_ports)          
         else:
             print("couldnt find", filename)
@@ -210,7 +226,7 @@ class RIP_Router():
                 rx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
                 rx_socket.settimeout(TIMEOUT)            
                 rx_socket.bind((self.address, rx_port))
-                print("    creating input_socket:",rx_socket)
+                #print("    creating input_socket:",rx_socket)
                 self.input_sockets.append(rx_socket)
                 
             except Exception as e:
@@ -252,7 +268,7 @@ class RIP_Router():
                 delta_time = end - start
                 #print('delta_time:',delta_time)
                 if len(rlist) != 0: #no timeout
-                    #print("received packets ready to be read in socket ids:",rlist)
+                    print("received packets ready to be read in socket ids:",rlist)
                     time_remaining -= delta_time
                 else: #timeout
                     time_remaining = time_remaining_constant + (random.random()*random_range) - random_range/2
