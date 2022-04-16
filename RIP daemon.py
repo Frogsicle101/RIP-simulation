@@ -38,7 +38,7 @@ class Row():
         return '(cost:'+str(self.cost)+', next_hop:'+str(self.next_hop)+', id:'+str(self.instance_id)+')'
     def __repr__(self):
         return str(self)
-    
+
 
 
 class RIP_Router():
@@ -47,10 +47,10 @@ class RIP_Router():
     input_ports = None      #ports to receive packets from neighbour routers
     config_file = None
     input_sockets = None    #list of sockets, each bound to one of the input_ports
-    address = None          #local computer addr 
+    address = None          #local computer addr
     instance_id = None      #router-id of running process
     neighbour_info = None   #info on links to neighbour routers [output_port, cost, router_id]
-    
+
     def close(self):
         if self.config_file:
             self.config_file.close()
@@ -58,35 +58,47 @@ class RIP_Router():
             for input_socket in self.input_sockets:
                 input_socket.close()
         sys.exit()
-    
+
     def __init__(self, filename):
         self.process_config_file(filename)
         self.init_input_ports()
         self.table[self.instance_id] = Row(0,self.instance_id,self.instance_id)#init table with own entry
-        print("forwarding table:",self.table)
+        self.print_table()
         self.run()
         self.close()
 
+    def print_table(self):
+        print("Forwarding Table for {}".format(self.instance_id))
+        headings = ["Address", "Next Hop", "Cost"]
+        print((" | ").join(headings))
+        print("-" * sum(len(heading) + 3 for heading in headings))
+        for dest, row in sorted(self.table.items(), key=lambda x: x[0]):
+            print("{} | {} | {}".format(
+                str(dest).center(len(headings[0])),
+                str(row.next_hop).center(len(headings[1])),
+                str(row.cost).center(len(headings[2]))
+            ))
+
 
     def create_response(self):
-        '''   
+        '''
         command(1) - version(1) - zero(2)  #header(4)
-            
+
         addr_family_id(2) - zero(2)        #each entry (20)
         ipv4_addr(4)
         zero(4)
         zero(4)
         metric(4)
-        '''      
+        '''
         command = int(1).to_bytes(1, 'big')
         version = int(2).to_bytes(1, 'big')
         zero2 = int(0).to_bytes(2, 'big')
 
         header = command + version + zero2
-        
+
         payload = bytes()
         for router_id in self.table.keys():
-            addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET    
+            addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET
             ipv4_addr = int(router_id).to_bytes(4, 'big')
             zero4 = int(0).to_bytes(4, 'big')
             metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
@@ -95,7 +107,7 @@ class RIP_Router():
         #print(result)
         return result
         #return bytearray(command + version + zero2 + addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric)
-        
+
     def send_response(self, addr_port):
         '''3.9.2 Response Messages'''
         packet = self.create_response()
@@ -110,7 +122,7 @@ class RIP_Router():
         #print("    sending all neighbours a response packet")
         for output_port in self.output_ports:
             self.send_response(output_port)
-    
+
     def read_response(self,data):
         '''convert the recvd packet to a table'''
         #print("reading response..")
@@ -141,12 +153,12 @@ class RIP_Router():
                 break
         #print("  recvd table:",recvd_table)
         return recvd_table
-    
+
     def update_table(self, other_table):
         '''compare tables and update if route is better'''
         for key in other_table.keys():
             try:
-                self.table[key]               
+                self.table[key]
                 #check if other_table has better route
             except KeyError:
                 #use config file neighbour links if key(id) in neighbour_ids(e.g 2 in [2])
@@ -155,7 +167,8 @@ class RIP_Router():
                    self.table[key] = Row(1,key,key)
                 else:
                     self.table[key] = other_table[key]
-        print("updated table:",self.table)
+        print("Updated table")
+        self.print_table()
 
 
 
@@ -168,12 +181,12 @@ class RIP_Router():
             -contains a unique identification for the routing demon instance,
             -the port numbers on which the demon receives routing packets from peer demons (input ports),
             -and specifications of the outputs towards neighbored routers.
-            
+
         Clearly, any output port declared for one router should be an input port of another router. The
         information in the configuration file is only meant to inform demons about links,
         the demons internal routing table must not be initialized from the configuration
         file.
-        '''        
+        '''
         self.config_file = None
         if os.path.isfile(filename):
             try:
@@ -181,10 +194,10 @@ class RIP_Router():
             except Exception as e:
                 print("couldnt open", filename, e)
                 self.config_file = None
-                self.close()              
+                self.close()
             config_text = self.config_file.read().split("\n")
             self.config_file.close()
-            print("config file lines:",config_text)         
+            print("config file lines:",config_text)
             for line in config_text:
                 line = line.lstrip()
                 #print(line)
@@ -201,7 +214,7 @@ class RIP_Router():
                             self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
                     print("neighbour_info",self.neighbour_info)
 
-            #print(self.instance_id,self.input_ports,self.output_ports)          
+            #print(self.instance_id,self.input_ports,self.output_ports)
         else:
             print("couldnt find", filename)
             self.config_file = None
@@ -224,11 +237,11 @@ class RIP_Router():
         for rx_port in self.input_ports:
             try:
                 rx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
-                rx_socket.settimeout(TIMEOUT)            
+                rx_socket.settimeout(TIMEOUT)
                 rx_socket.bind((self.address, rx_port))
                 #print("    creating input_socket:",rx_socket)
                 self.input_sockets.append(rx_socket)
-                
+
             except Exception as e:
                 print("failed to create socket.", rx_port, e)
                 self.close()
@@ -251,12 +264,12 @@ class RIP_Router():
         '''
         print("\n\nrun\n\n")
         inputs = [x.fileno() for x in self.input_sockets]
-        #print(inputs)     
-        
+        #print(inputs)
+
         self.send_all_responses()
 
         random_range = 2#should be 10 when we finished
-        
+
         time_remaining_constant = 10
         time_remaining = time_remaining_constant
         while True:
@@ -272,13 +285,13 @@ class RIP_Router():
                     time_remaining -= delta_time
                 else: #timeout
                     time_remaining = time_remaining_constant + (random.random()*random_range) - random_range/2
-                    self.send_all_responses()                                            
+                    self.send_all_responses()
 
                 try:
                     '''reads responses (if any) from neighbours and updates tables'''
                     for socket_id in rlist:
                         sock = socket.fromfd(socket_id,socket.AF_INET, socket.SOCK_DGRAM)
-                        #print(sock)                       
+                        #print(sock)
                         data = sock.recv(MAX_PACKET_SIZE)
                         #exit(1)
                         other_table = self.read_response(data)
@@ -286,40 +299,13 @@ class RIP_Router():
                 except Exception as e:
                     #print(e)
                     pass
-                    
-                
+
+
                 #self.close()
             except Exception as e:
                 print(e)
                 self.close()
         self.close()
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 class Client():
     server_address = None
@@ -335,7 +321,7 @@ class Client():
         if self.file:
             self.file.close()
         sys.exit()
-    
+
     def init_server_address(self, server_input):
         try:
             self.server_address = socket.gethostbyname(server_input)
@@ -392,15 +378,15 @@ class Client():
             self.socket.send(file_request)
         except socket.timeout:
             print("socket timed out while sending the file request")
-            self.close()    
-    
+            self.close()
+
     def process_file_response(self):
         try:
             header = self.socket.recv(8)
         except socket.timeout:
             print('socket.timeout: timed out receiving header')
             self.close()
-        
+
         magic_number = int.from_bytes(header[0:2], 'big')
         type_code = header[2]
         status_code = header[3]
@@ -409,13 +395,13 @@ class Client():
             return
         data_length = int.from_bytes(header[4:8], 'big')
         print("file response decoded:", magic_number, type_code, status_code, data_length)
-        
+
         try:
             self.file = open(self.filename, 'wb')
         except:
             #print(f"error creating file {self.filename}.")
             return
-            
+
         data_written = 0
         try:
             while data_written < data_length:
@@ -472,9 +458,9 @@ class Server():
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, 0)
             self.name = socket.gethostname()
             self.address = socket.gethostbyname(self.name)
-            self.address = ''   
+            self.address = ''
             self.socket.bind((self.address, self.port_number))
-     
+
         except:
             print("failed to create socket.")
             self.close()
@@ -486,7 +472,7 @@ class Server():
             except:
                 print('socket.listen() error.')
                 self.close()
-                
+
             self.connection, address = self.socket.accept()
             self.connection.settimeout(TIMEOUT)
             t = time.localtime()
@@ -497,7 +483,7 @@ class Server():
                 print("failed to send file.")
             else:
                 print("file sent succesfully.")
-            self.connection.close() 
+            self.connection.close()
 
     def process_file_request(self, connection, address):
         '''read and validate data from received packet'''
@@ -506,25 +492,25 @@ class Server():
         except socket.timeout:
             print("connection timed out while receiving request.")
             return False
-        
+
         magic_number = int.from_bytes(header[0:2], 'big')#file request number
         type_code = header[2]
         if magic_number != 0x497E or type_code != 1:
             print("invalid file request (magic no. or type code incorrect).")
             return False
-        
+
         filename_length = int.from_bytes(header[3:5], 'big')
         if filename_length > 1024 or filename_length < 1:
             print('filename size invalid (must be > 0 and <= 1024')
             return False
-        
+
         filename_bytes = connection.recv(filename_length)
         if len(filename_bytes) != filename_length:
             #print(f"given filename length was incorrect {filename_length}\
                   #indicated but {len(filename_bytes)} received")
             print("file len error")
             return False
-        
+
         filename = filename_bytes.decode()
         #print(f"{filename} requested.")
 
@@ -534,7 +520,7 @@ class Server():
         return True
 
     def send_file_data(self, connection, filename):
-        '''get file data and send file response packet(s)'''        
+        '''get file data and send file response packet(s)'''
         self.file = None
         if os.path.isfile(filename):
             try:
@@ -546,7 +532,7 @@ class Server():
                 return False
             data_len = os.path.getsize(filename)
             print("file size:{} bytes".format(data_len))
-            file_response_header = self.create_file_response_header(data_len)  
+            file_response_header = self.create_file_response_header(data_len)
             MAX_PACKET_SIZE = 4096
             data_read = 0
             connection.send(file_response_header)
@@ -562,16 +548,16 @@ class Server():
             #print(f"couldn't open file {filename}")
             print("couldnt find", filename)
             data = None
-            file_response_header = self.create_file_response_header(0)   
+            file_response_header = self.create_file_response_header(0)
             connection.send(file_response_header)
-        
-         
+
+
         if self.file:
             self.file.close()
             return True
         print('unk send err')
         return False
-                 
+
     def create_file_response_header(self, file_len):
         magic_number = 0x497E.to_bytes(2, 'big')#file request number
         type_code = int(2).to_bytes(1, 'big')
@@ -593,33 +579,8 @@ class Server():
         self.close()
 
 
-
-
-
-
-
-
-
-
 def main():
     filename = ARGUEMENTS[0]
     router = RIP_Router(filename)
 
 main()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
