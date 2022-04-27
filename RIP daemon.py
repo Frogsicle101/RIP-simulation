@@ -28,8 +28,8 @@ if len(ARGUEMENTS) != 1:
 
 class Row():
     cost=1
-    next_hop=None
-    instance_id=None
+    next_hop=None       #next hop router_id
+    instance_id=None    #not used?
     def __init__(self, cost, next_hop, instance_id):
         self.cost = cost
         self.next_hop = next_hop
@@ -92,14 +92,15 @@ class RIP_Router():
         '''
         command = int(1).to_bytes(1, 'big')
         version = int(2).to_bytes(1, 'big')
+        router_id = int(self.instance_id).to_bytes(2, 'big')
         zero2 = int(0).to_bytes(2, 'big')
 
-        header = command + version + zero2
+        header = command + version + router_id#zero2 #header uses router_id instead of 16bit zero
 
         payload = bytes()
-        for router_id in self.table.keys():
+        for router_id in self.table.keys():#for each destination router_id
             addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET
-            ipv4_addr = int(router_id).to_bytes(4, 'big')
+            ipv4_addr = int(self.table[router_id].next_hop).to_bytes(4, 'big')#next_hop
             zero4 = int(0).to_bytes(4, 'big')
             metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
             payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
@@ -124,14 +125,14 @@ class RIP_Router():
             self.send_response(output_port)
 
     def read_response(self,data):
-        '''convert the recvd packet to a table'''
+        '''convert the recvd packet to a table, returns rId(int), table(dict)'''
         #print("reading response..")
         #data= bytearray(data)
         #print(data[2:4],int.from_bytes(data[2:4], 'big'))
         try:
             command = data[0]#int.from_bytes(data[0], 'big')
             version = data[1]#int.from_bytes(data[1], 'big')
-            zero2 = int.from_bytes(data[2:4], 'big')
+            router_id = int.from_bytes(data[2:4], 'big')#router(id) that sent the data
             #print("hdr:",command,version,zero2)
         except Exception as e:
             print(e)
@@ -141,21 +142,22 @@ class RIP_Router():
             try:
                 addr_family_id = int.from_bytes(data[i:i+2], 'big')
                 i+=4
-                ipv4_addr = int.from_bytes(data[i:i+4], 'big')
+                ipv4_addr = int.from_bytes(data[i:i+4], 'big')#dest addr from the router sending
                 i+=12
                 metric = int.from_bytes(data[i:i+4], 'big')
                 #print("recdv:",addr_family_id,ipv4_addr,metric)
-                row = Row(metric, ipv4_addr, ipv4_addr)
+                row = Row(metric, router_id, ipv4_addr)#cost, next_hop, instance_id
                 recvd_table[ipv4_addr] = row
                 i+=4
                 #print(i)
             except IndexError:
                 break
         #print("  recvd table:",recvd_table)
-        return recvd_table
+        return router_id, recvd_table
 
-    def update_table(self, other_table):
+    def update_table(self, other_router_id, other_table):
         '''compare tables and update if route is better'''
+        print('test')
         for key in other_table.keys():
             try:
                 self.table[key]
@@ -163,15 +165,22 @@ class RIP_Router():
             except KeyError:
                 #use config file neighbour links if key(id) in neighbour_ids(e.g 2 in [2])
                 neighbour_ids = [x[2] for x in self.neighbour_info]
-                if key in neighbour_ids:
-                   self.table[key] = Row(1,key,key)
+                if key in neighbour_ids:#key is a direct neighbour, so next_hop = key
+                   self.table[key] = Row(1, key, other_router_id)#cost, next_hop, instance_id
                 else:
-                    self.table[key] = other_table[key]
+                    '''
+                    e.g. key=3,next_hop=2,cost=1
+                    row.cost = cost(1->next_hop) + cost = 2                 
+                    '''
+                    row = other_table[key]
+                    row.next_hop = other_router_id
+                    row.cost += self.table[row.next_hop].cost
+                    self.table[key] = row
         print("Updated table")
         self.print_table()
 
 
-
+    
 
 
 
@@ -294,8 +303,8 @@ class RIP_Router():
                         #print(sock)
                         data = sock.recv(MAX_PACKET_SIZE)
                         #exit(1)
-                        other_table = self.read_response(data)
-                        self.update_table(other_table)
+                        other_router_id, other_table = self.read_response(data)
+                        self.update_table(other_router_id, other_table)
                 except Exception as e:
                     #print(e)
                     pass
