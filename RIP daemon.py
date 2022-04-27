@@ -100,7 +100,7 @@ class RIP_Router():
         payload = bytes()
         for router_id in self.table.keys():#for each destination router_id
             addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET
-            ipv4_addr = int(self.table[router_id].next_hop).to_bytes(4, 'big')#next_hop
+            ipv4_addr = int(router_id).to_bytes(4, 'big')#next_hop
             zero4 = int(0).to_bytes(4, 'big')
             metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
             payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
@@ -157,21 +157,24 @@ class RIP_Router():
 
     def update_table(self, other_router_id, other_table):
         '''compare tables and update if route is better'''
-        print('test')
+        if self.instance_id == 1:
+            print(other_table)
+        neighbour_ids = set([x[2] for x in self.neighbour_info])
         for key in other_table.keys():
             try:
                 self.table[key]
-                #check if other_table has better route
+                #check if other_table has better route              
             except KeyError:
-                #use config file neighbour links if key(id) in neighbour_ids(e.g 2 in [2])
-                neighbour_ids = [x[2] for x in self.neighbour_info]
+                #use config file neighbour links if key(id) in neighbour_ids(e.g 2 in [2])               
                 if key in neighbour_ids:#key is a direct neighbour, so next_hop = key
                    self.table[key] = Row(1, key, other_router_id)#cost, next_hop, instance_id
                 else:
                     '''
-                    e.g. key=3,next_hop=2,cost=1
-                    row.cost = cost(1->next_hop) + cost = 2                 
+                    from rId=4, recving full table from rId=3
+                        key=3 (neighbour)
+                        key=2 
                     '''
+                    
                     row = other_table[key]
                     row.next_hop = other_router_id
                     row.cost += self.table[row.next_hop].cost
