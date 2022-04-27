@@ -159,7 +159,7 @@ class RIP_Router():
         '''compare tables and update if route is better'''
         if self.instance_id == 1:
             print(other_table)
-        neighbour_ids = set([x[2] for x in self.neighbour_info])
+        neighbour_ids = [x[2] for x in self.neighbour_info]
         for key in other_table.keys():
             try:
                 self.table[key]
@@ -167,14 +167,9 @@ class RIP_Router():
             except KeyError:
                 #use config file neighbour links if key(id) in neighbour_ids(e.g 2 in [2])               
                 if key in neighbour_ids:#key is a direct neighbour, so next_hop = key
-                   self.table[key] = Row(1, key, other_router_id)#cost, next_hop, instance_id
+                    cost = self.neighbour_info[neighbour_ids.index(key)][1]
+                    self.table[key] = Row(cost, key, other_router_id)#cost, next_hop, instance_id
                 else:
-                    '''
-                    from rId=4, recving full table from rId=3
-                        key=3 (neighbour)
-                        key=2 
-                    '''
-                    
                     row = other_table[key]
                     row.next_hop = other_router_id
                     row.cost += self.table[row.next_hop].cost
