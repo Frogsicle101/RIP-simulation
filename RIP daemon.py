@@ -1,10 +1,8 @@
 """
-py "RIP daemon.py" "config2.txt"
+py "RIP daemon.py" "config5.txt"
 """
 import socket, os, sys, select, time, random
 
-MAX_PACKET_SIZE = 4096 #maximum packet size in bytes to avoid memory/RAM issues
-TIMEOUT = 15 #timeout for sockets in seconds
 
 
 '''
@@ -17,8 +15,8 @@ where input ports are the routers ports to listen to packets
 and outputs = port addr to send to other routers
     e.g 5002=input port of router:4 with cost:5
 '''
-
-
+MAX_PACKET_SIZE = 4096
+TIMEOUT = 20#180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
 ARGUEMENTS = sys.argv[1:]
 if len(ARGUEMENTS) != 1:
     ARGUEMENTS = ['config1.txt']
@@ -26,15 +24,17 @@ if len(ARGUEMENTS) != 1:
     #print("filename")
     #sys.exit()
 
+class Neighbour():
+    '''neighbour'''
+    def __init__(self):
+        self.last_response_time = time.time()
+        self.timer = 0
+
 class Row():
-    cost=1
-    next_hop=None       #next hop router_id
-    last_confirmation_time=None          # TODO time since last updated (from neighbours, excluding self info),
-                                         # needs to be checked to confirm it is still valid (<180s)
+    '''entry(value) in the routers forwarding table (dictionary) where the key is the destination router_id'''
     def __init__(self, cost, next_hop):
         self.cost = cost
         self.next_hop = next_hop
-        self.timer = time.time()
     def __str__(self):
         return '(cost:'+str(self.cost)+', next_hop:'+str(self.next_hop)+')'
     def __repr__(self):
@@ -43,7 +43,8 @@ class Row():
 
 
 class RIP_Router():
-    table = {}              #dictionary with key=destination_port, value=row object
+    neighbours = {}         #dictionary with key=neighbour_router_id, value=Neighbour object
+    table = {}              #dictionary with key=destination_router_id, value=Row object
     output_ports = None     #addr_port list of neighbour routers
     input_ports = None      #ports to receive packets from neighbour routers
     config_file = None
@@ -70,14 +71,21 @@ class RIP_Router():
 
     def print_table(self):
         print("Forwarding Table for {}".format(self.instance_id))
-        headings = ["Address", "Next Hop", "Cost"]
+        headings = ["Address", "Next Hop", "Cost", "timer"]
         print((" | ").join(headings))
         print("-" * sum(len(heading) + 3 for heading in headings))
         for dest, row in sorted(self.table.items(), key=lambda x: x[0]):
-            print("{} | {} | {}".format(
+            timer = ""
+            #print(dest,set(self.neighbours.keys()))
+            if dest in self.neighbours.keys():
+                #print("test")
+                timer = f"{self.neighbours[dest].timer:.2f}"
+
+            print("{} | {} | {} | {}".format(
                 str(dest).center(len(headings[0])),
                 str(row.next_hop).center(len(headings[1])),
-                str(row.cost).center(len(headings[2]))
+                str(row.cost).center(len(headings[2])),
+                str(timer).center(len(headings[3]))
             ))
 
     def create_response(self):
@@ -135,7 +143,7 @@ class RIP_Router():
                 ipv4_addr = int.from_bytes(data[i:i+4], 'big')#dest addr from the router sending
                 i+=12
                 metric = int.from_bytes(data[i:i+4], 'big')
-                row = Row(metric, router_id)#cost, next_hop, instance_id
+                row = Row(metric, router_id)#cost, next_hop
                 recvd_table[ipv4_addr] = row
                 i+=4
             except IndexError:
@@ -144,20 +152,27 @@ class RIP_Router():
 
     def update_table(self, other_router_id, other_table):
         '''compare tables and update if route is better'''
-        neighbour_ids = [x[2] for x in self.neighbour_info]
+        #first update the timer for the router which sent this response to confirm its alive (else it will timeout then set to cost 16)
+        if other_router_id in self.neighbours.keys():
+            self.neighbours[other_router_id].last_response_time = time.time()
+            self.neighbours[other_router_id].timer = 0.00
+        neighbour_ids = [x[2] for x in self.neighbour_info]#TODO use neighbours dict with Neighbour objects to replace neighbour_info and output_ports
         cost = self.neighbour_info[neighbour_ids.index(other_router_id)][1]
-        for key in other_table.keys():
-            try:
-                current_row = self.table[key]
+        for key in other_table.keys():            
+            try:#a route to this dst (key) already exists, so perform checks                        
                 #check if other_table has better route
+                current_row = self.table[key]                
                 other_row = other_table[key]
+                if current_row.cost > (other_row.cost + cost):#current route less optimal than jump_to_neighbour + neighbours_route
+                    #print(f"dst:{key}, me:{self.instance_id}-{current_row}, other:{other_router_id}-{other_row} {cost}")
+                    row = Row(other_row.cost + cost, other_router_id)
+                    self.table[key] = row
               
-            except KeyError:
+            except KeyError:#means we currently do not have a route to this dst (key)
                 row = other_table[key]
                 row.next_hop = other_router_id#next_hop is the router sending the advertisement
                 row.cost += cost#cost to the router sending the advertisement + its own cost to reach dst
                 self.table[key] = row
-        print("Updated table")
         self.print_table()
 
     def process_config_file(self, filename):
@@ -192,6 +207,7 @@ class RIP_Router():
                     self.output_ports = [int(x.split('-')[0]) for x in line[len("outputs "):].split(",")]     #7002
                     self.neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")]   #7002-1-1 (port,cost,id)
                     for i, entry in enumerate(self.neighbour_info):
+                        self.neighbours[int(entry[2])] = Neighbour()
                         for j, number in enumerate(self.neighbour_info[i]):
                             self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
                     print("neighbour_info",self.neighbour_info)
@@ -252,6 +268,15 @@ class RIP_Router():
                 end = time.time()
                 #print(rlist, wlist, xlist)
                 delta_time = end - start
+                
+                #add time waited to each routes timer                
+                for key in self.neighbours.keys():
+                    if key != self.instance_id:#don't increase timer of own route
+                        self.neighbours[key].timer = time.time() - self.neighbours[key].last_response_time
+                        if self.neighbours[key].timer > TIMEOUT:
+                            self.table[key].cost = 16
+                
+                
                 #print('delta_time:',delta_time)
                 if len(rlist) != 0: #no timeout
                     print("received packets ready to be read in socket ids:",rlist)
@@ -259,24 +284,22 @@ class RIP_Router():
                 else: #timeout
                     time_remaining = time_remaining_constant + (random.random()*random_range) - random_range/2
                     self.send_all_responses()
+                    self.print_table()
 
                 try:
                     '''reads responses (if any) from neighbours and updates tables'''
                     for socket_id in rlist:
                         sock = socket.fromfd(socket_id,socket.AF_INET, socket.SOCK_DGRAM)
-                        #print(sock)
                         data = sock.recv(MAX_PACKET_SIZE)
-                        #exit(1)
                         other_router_id, other_table = self.read_response(data)
                         self.update_table(other_router_id, other_table)
-                except Exception as e:
-                    #print(e)
+                except Exception as e:#except to ignore the error
+                    #print(e)#[WinError 10054] An existing connection was forcibly closed
                     pass
             except Exception as e:
                 print(e)
                 self.close()
         self.close()
-
 
 def main():
     filename = ARGUEMENTS[0]
