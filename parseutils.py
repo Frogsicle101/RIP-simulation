@@ -2,6 +2,8 @@
 A collection of functions used in parsing the router config files
 """
 
+import sys
+
 def read_lines_from_file(filename):
     with open(filename, 'r') as config_file:
         return config_file.read().splitlines()
@@ -24,7 +26,7 @@ def is_valid_port(port, existing_ports):
 
 def is_valid_link(link, existing_ports):
 	try:
-		port, cost, id = link.split("-")
+		port, cost, id = link.strip().split("-")
 	except ValueError:
 		print(link, "does not follow the format (port-cost-id)")
 		sys.exit()
