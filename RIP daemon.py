@@ -73,6 +73,66 @@ class RIP_Router():
         self.run()
         self.close()
 
+    def process_config_file(self, filename):
+        '''
+        reads a configuration file (name supplied as a command line parameter)
+            -contains a unique identification for the routing demon instance,
+            -the port numbers on which the demon receives routing packets from peer demons (input ports),
+            -and specifications of the outputs towards neighbored routers.
+
+        Clearly, any output port declared for one router should be an input port of another router. The
+        information in the configuration file is only meant to inform demons about links,
+        the demons internal routing table must not be initialized from the configuration
+        file.
+        '''
+        self.config_file = None
+        if os.path.isfile(filename):
+            try:
+                self.config_file = open(filename, 'r')
+            except Exception as e:
+                print("couldnt open", filename, e)
+                self.close()
+            config_text = self.config_file.read().split("\n")
+            self.config_file.close()
+            print("config file lines:",config_text)
+            for line in config_text:
+                line = line.lstrip()
+                if "router-id" in line:
+                    self.instance_id = int(line.split()[1])
+                elif "input-ports" in line:
+                    self.input_ports = [int(x) for x in line[len("input-ports"):].split(",")]
+                elif "outputs" in line:
+                    self.output_ports = [int(x.split('-')[0]) for x in line[len("outputs "):].split(",")]     #7002
+                    self.neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")]   #7002-1-1 (port,cost,id)
+                    for i, entry in enumerate(self.neighbour_info):
+                        #self.neighbours[int(entry[2])] = Neighbour()
+                        for j, number in enumerate(self.neighbour_info[i]):
+                            self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
+                    print("neighbour_info",self.neighbour_info)
+        else:
+            print("couldnt find", filename)
+            self.close()
+
+    def init_input_ports(self):
+        '''
+        Next the demon creates as many UDP sockets as it has input ports and binds one
+        socket to each input port – no sockets are created for outputs, these only refer to
+        input ports of neighbored routers. One of the input sockets can be used for sending
+        UDP datagrams to neighbors.
+        '''
+        name = socket.gethostname()
+        self.address = 'localhost'
+        self.input_sockets = []
+        for rx_port in self.input_ports:
+            try:
+                rx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
+                rx_socket.settimeout(TIMEOUT)
+                rx_socket.bind((self.address, rx_port))
+                self.input_sockets.append(rx_socket)
+            except Exception as e:
+                print("failed to create socket.", rx_port, e)
+                self.close()
+
     def print_table(self):
         print("Forwarding Table for {}".format(self.instance_id))
         headings = ["Address", "Next Hop", "Cost", "timer"]
@@ -194,65 +254,7 @@ class RIP_Router():
                     self.table[key].timer = 0.00
         self.print_table()
 
-    def process_config_file(self, filename):
-        '''
-        reads a configuration file (name supplied as a command line parameter)
-            -contains a unique identification for the routing demon instance,
-            -the port numbers on which the demon receives routing packets from peer demons (input ports),
-            -and specifications of the outputs towards neighbored routers.
 
-        Clearly, any output port declared for one router should be an input port of another router. The
-        information in the configuration file is only meant to inform demons about links,
-        the demons internal routing table must not be initialized from the configuration
-        file.
-        '''
-        self.config_file = None
-        if os.path.isfile(filename):
-            try:
-                self.config_file = open(filename, 'r')
-            except Exception as e:
-                print("couldnt open", filename, e)
-                self.close()
-            config_text = self.config_file.read().split("\n")
-            self.config_file.close()
-            print("config file lines:",config_text)
-            for line in config_text:
-                line = line.lstrip()
-                if "router-id" in line:
-                    self.instance_id = int(line.split()[1])
-                elif "input-ports" in line:
-                    self.input_ports = [int(x) for x in line[len("input-ports"):].split(",")]
-                elif "outputs" in line:
-                    self.output_ports = [int(x.split('-')[0]) for x in line[len("outputs "):].split(",")]     #7002
-                    self.neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")]   #7002-1-1 (port,cost,id)
-                    for i, entry in enumerate(self.neighbour_info):
-                        #self.neighbours[int(entry[2])] = Neighbour()
-                        for j, number in enumerate(self.neighbour_info[i]):
-                            self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
-                    print("neighbour_info",self.neighbour_info)
-        else:
-            print("couldnt find", filename)
-            self.close()
-
-    def init_input_ports(self):
-        '''
-        Next the demon creates as many UDP sockets as it has input ports and binds one
-        socket to each input port – no sockets are created for outputs, these only refer to
-        input ports of neighbored routers. One of the input sockets can be used for sending
-        UDP datagrams to neighbors.
-        '''
-        name = socket.gethostname()
-        self.address = 'localhost'
-        self.input_sockets = []
-        for rx_port in self.input_ports:
-            try:
-                rx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
-                rx_socket.settimeout(TIMEOUT)
-                rx_socket.bind((self.address, rx_port))
-                self.input_sockets.append(rx_socket)
-            except Exception as e:
-                print("failed to create socket.", rx_port, e)
-                self.close()
 
     def run(self):
         '''
