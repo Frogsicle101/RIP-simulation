@@ -94,6 +94,10 @@ class RIP_Router():
             print("Error opening file")
             sys.exit()
 
+        id_set = False
+        inputs_set = False
+        outputs_set = False
+
         for line in lines:
             line = line.strip()
             if "router-id" in line:
@@ -102,6 +106,7 @@ class RIP_Router():
                     id = int(id)
                     if id >= 1 and id <= 64000:
                         self.instance_id = id
+                        id_set = True
                     else:
                         print(id, "is not a valid router ID (must be between 1 and 64000)")
                         sys.exit()
@@ -126,6 +131,7 @@ class RIP_Router():
                         sys.exit()
 
                     self.input_ports.append(port)
+                    inputs_set = True
 
             elif "outputs" in line:
                 self.neighbour_info = []
@@ -169,7 +175,15 @@ class RIP_Router():
 
                     self.neighbour_info.append((port, cost, id))
                     output_ports.append(port) # So we can easily track duplicates
+                outputs_set = True
+            elif "route-timeout" in line:
+                if is_valid_int(line.split()[1], 1, float('inf'), "route timeout"):
+                    TIMEOUT = int(line.split()[1])
 
+
+
+        if not all((id_set, inputs_set, outputs_set)):
+            print("Need all of router-id, input-ports, outputs")
 
     def init_input_ports(self):
         '''
@@ -384,6 +398,19 @@ class RIP_Router():
 def read_lines_from_file(filename):
     with open(filename, 'r') as config_file:
         return config_file.read().splitlines()
+
+def is_valid_int(val, min, max, name):
+    if val.isdigit():
+        val = int(val)
+        if val >= min and val <= max:
+            return True
+        else:
+            print(val, "is not a valid {} (must be between {} and {})".format(name, min, max))
+            sys.exit()
+    else:
+        print(val, "is not a valid {} (non-integer)".format(name))
+        sys.exit()
+
 
 
 def main():
