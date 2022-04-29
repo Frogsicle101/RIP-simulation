@@ -2,6 +2,7 @@
 py "RIP daemon.py" "config5.txt"
 """
 import socket, os, sys, select, time, random
+from parseutils import parse_config_file
 
 
 
@@ -66,124 +67,18 @@ class RIP_Router():
         sys.exit()
 
     def __init__(self, filename):
-        self.process_config_file(filename)
+        file_data = parse_config_file(filename)
+        (self.instance_id,
+        self.input_ports,
+        self.neighbour_info,
+        timeout) = file_data
+
         self.init_input_ports()
         self.table[self.instance_id] = Row(0,self.instance_id)#init table with own entry
         self.print_table()
         self.run()
         self.close()
 
-    def process_config_file(self, filename):
-        '''
-        reads a configuration file (name supplied as a command line parameter)
-            -contains a unique identification for the routing demon instance,
-            -the port numbers on which the demon receives routing packets from peer demons (input ports),
-            -and specifications of the outputs towards neighbored routers.
-
-        Clearly, any output port declared for one router should be an input port of another router. The
-        information in the configuration file is only meant to inform demons about links,
-        the demons internal routing table must not be initialized from the configuration
-        file.
-        '''
-        try:
-            lines = read_lines_from_file(filename)
-        except FileNotFoundError:
-            print("Couldn't find", filename)
-            sys.exit()
-        except OSError:
-            print("Error opening file")
-            sys.exit()
-
-        id_set = False
-        inputs_set = False
-        outputs_set = False
-
-        for line in lines:
-            line = line.strip()
-            if "router-id" in line:
-                id = line.split()[1]
-                if id.isdigit():
-                    id = int(id)
-                    if id >= 1 and id <= 64000:
-                        self.instance_id = id
-                        id_set = True
-                    else:
-                        print(id, "is not a valid router ID (must be between 1 and 64000)")
-                        sys.exit()
-                else:
-                    print(id, "is not a valid router ID (non-integer)")
-                    sys.exit()
-
-            elif "input-ports" in line:
-                self.input_ports = []
-                for port in line[len("input-ports"):].split(","):
-                    port = port.strip()
-                    if not port.isdigit():
-                        print(port, "is not a valid port (non-integer)")
-                        sys.exit()
-                    port = int(port)
-                    if port < 1024 or port > 64000:
-                        print(port, "is not a valid port (must be between 1024 and 64000)")
-                        sys.exit()
-
-                    if port in self.input_ports:
-                        print(port, "can not occur more than once")
-                        sys.exit()
-
-                    self.input_ports.append(port)
-                    inputs_set = True
-
-            elif "outputs" in line:
-                self.neighbour_info = []
-                output_ports = []
-                for link in line[len("outputs "):].split(","):
-                    try:
-                        port, cost, id = link.split("-")
-                    except ValueError:
-                        print(link, "does not follow the format (port-cost-id)")
-                        sys.exit()
-                    if not port.isdigit():
-                        print(port, "is not a valid port (non-integer)")
-                        sys.exit()
-
-                    port = int(port)
-                    if port < 1024 or port > 64000:
-                        print(port, "is not a valid port (must be between 1024 and 64000)")
-                        sys.exit()
-
-                    if port in self.input_ports or port in output_ports:
-                        print(port, "can not occur more than once")
-                        sys.exit()
-
-                    if not cost.isdigit():
-                        print(cost, "is not a valid cost (non-integer)")
-                        sys.exit()
-
-                    cost = int(cost)
-                    if cost < 1 or cost > 16:
-                        print(cost, "is not a valid cost (must be between 1 and 16)")
-                        sys.exit()
-
-                    if not id.isdigit():
-                        print(id, "is not a valid id (non-integer)")
-                        sys.exit()
-
-                    id = int(id)
-                    if id < 1 or id > 64000:
-                        print(id, "is not a valid id (must be between 1 and 64000)")
-                        sys.exit()
-
-                    self.neighbour_info.append((port, cost, id))
-                    output_ports.append(port) # So we can easily track duplicates
-                outputs_set = True
-            elif "route-timeout" in line:
-                if is_valid_int(line.split()[1], 1, float('inf'), "route timeout"):
-                    TIMEOUT = int(line.split()[1])
-
-
-
-        if not all((id_set, inputs_set, outputs_set)):
-            print("Need all of router-id, input-ports, outputs")
 
     def init_input_ports(self):
         '''
@@ -198,7 +93,6 @@ class RIP_Router():
         for rx_port in self.input_ports:
             try:
                 rx_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, 0)
-                rx_socket.settimeout(TIMEOUT)
                 rx_socket.bind((self.address, rx_port))
                 self.input_sockets.append(rx_socket)
             except Exception as e:
@@ -326,8 +220,6 @@ class RIP_Router():
                     self.table[key].timer = 0.00
         self.print_table()
 
-
-
     def run(self):
         '''
         Finally, you will enter an infinite loop in which you react to incoming events (check
@@ -394,23 +286,6 @@ class RIP_Router():
                 print(e)
                 self.close()
         self.close()
-
-def read_lines_from_file(filename):
-    with open(filename, 'r') as config_file:
-        return config_file.read().splitlines()
-
-def is_valid_int(val, min, max, name):
-    if val.isdigit():
-        val = int(val)
-        if val >= min and val <= max:
-            return True
-        else:
-            print(val, "is not a valid {} (must be between {} and {})".format(name, min, max))
-            sys.exit()
-    else:
-        print(val, "is not a valid {} (non-integer)".format(name))
-        sys.exit()
-
 
 
 def main():
