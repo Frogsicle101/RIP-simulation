@@ -43,8 +43,8 @@ def read_response(self,data):
     router_id = int.from_bytes(data[2:4], 'big')#router(id) that sent the data
    
     i = 4#packet payload (RIP entries) starts after 4 bytes   
-    if (len(data)-4) % 20 != 0:
-        return False,0,0#data length incorrect (should be 4 + 20x)
+    if (len(data)-4) % 20 != 0 or len(data) <= 4:
+        return False,0,0#data length incorrect (should be 4 + 20x) where x > 0
     
     recvd_table = {}
     while i < len(data):
