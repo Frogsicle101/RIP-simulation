@@ -35,6 +35,9 @@ class Row():
     def __init__(self, cost, next_hop):
         self.cost = cost
         self.next_hop = next_hop
+        self.last_response_time = time.time()
+        self.timer = 0
+
     def __str__(self):
         return '(cost:'+str(self.cost)+', next_hop:'+str(self.next_hop)+')'
     def __repr__(self):
@@ -43,7 +46,7 @@ class Row():
 
 
 class RIP_Router():
-    neighbours = {}         #dictionary with key=neighbour_router_id, value=Neighbour object
+    #neighbours = {}         #dictionary with key=neighbour_router_id, value=Neighbour object
     table = {}              #dictionary with key=destination_router_id, value=Row object
     output_ports = None     #addr_port list of neighbour routers
     input_ports = None      #ports to receive packets from neighbour routers
@@ -54,6 +57,7 @@ class RIP_Router():
     neighbour_info = None   #info on links to neighbour routers [output_port, cost, router_id]
 
     def close(self):
+        print("Closing")
         if self.config_file:
             self.config_file.close()
         if self.input_sockets:
@@ -77,9 +81,9 @@ class RIP_Router():
         for dest, row in sorted(self.table.items(), key=lambda x: x[0]):
             timer = ""
             #print(dest,set(self.neighbours.keys()))
-            if dest in self.neighbours.keys():
+            if dest in self.table.keys():
                 #print("test")
-                timer = f"{self.neighbours[dest].timer:.2f}"
+                timer = f"{self.table[dest].timer:.2f}"
 
             print("{} | {} | {} | {}".format(
                 str(dest).center(len(headings[0])),
@@ -88,7 +92,7 @@ class RIP_Router():
                 str(timer).center(len(headings[3]))
             ))
 
-    def create_response(self):
+    def create_response(self, destination):
         '''
         command(1) - version(1) - router_id(2)  #header(4)
 
@@ -110,21 +114,26 @@ class RIP_Router():
             addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET
             ipv4_addr = int(router_id).to_bytes(4, 'big')#next_hop is the router sending the response packet
             zero4 = int(0).to_bytes(4, 'big')
-            metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
+
+            if self.table[router_id].next_hop == destination:
+                metric = int(16).to_bytes(4, 'big')
+            else:
+                metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
+
             payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
         result = header + payload
         return result
 
-    def send_response(self, addr_port):
+    def send_response(self, addr_id, addr_port):
         '''3.9.2 Response Messages'''
-        packet = self.create_response()
+        packet = self.create_response(addr_id)
         target = (self.address, addr_port)
         self.input_sockets[0].sendto(bytes(packet),target)
 
     def send_all_responses(self):
         '''iterates all neighbour ports, and sends a response (advertisement) to each'''
-        for output_port in self.output_ports:
-            self.send_response(output_port)
+        for output_port, cost, id in self.neighbour_info:
+            self.send_response(id, output_port)
 
     def read_response(self,data):
         '''convert the recvd packet to a table, returns rId(int), table(dict)'''
@@ -153,26 +162,36 @@ class RIP_Router():
     def update_table(self, other_router_id, other_table):
         '''compare tables and update if route is better'''
         #first update the timer for the router which sent this response to confirm its alive (else it will timeout then set to cost 16)
-        if other_router_id in self.neighbours.keys():
-            self.neighbours[other_router_id].last_response_time = time.time()
-            self.neighbours[other_router_id].timer = 0.00
         neighbour_ids = [x[2] for x in self.neighbour_info]#TODO use neighbours dict with Neighbour objects to replace neighbour_info and output_ports
         cost = self.neighbour_info[neighbour_ids.index(other_router_id)][1]
-        for key in other_table.keys():            
-            try:#a route to this dst (key) already exists, so perform checks                        
+
+        for key in other_table.keys():
+            #todo CHECK IF COST IS 16
+
+            try:#a route to this dst (key) already exists, so perform checks
                 #check if other_table has better route
-                current_row = self.table[key]                
+                current_row = self.table[key]
                 other_row = other_table[key]
-                if current_row.cost > (other_row.cost + cost):#current route less optimal than jump_to_neighbour + neighbours_route
+
+                better_cost = current_row.cost >= (other_row.cost + cost)
+
+                if better_cost:#current route less optimal than jump_to_neighbour + neighbours_route
                     #print(f"dst:{key}, me:{self.instance_id}-{current_row}, other:{other_router_id}-{other_row} {cost}")
+                    self.table[key].last_response_time = time.time()
+                    self.table[key].timer = 0.00
                     row = Row(other_row.cost + cost, other_router_id)
                     self.table[key] = row
-              
+
             except KeyError:#means we currently do not have a route to this dst (key)
-                row = other_table[key]
-                row.next_hop = other_router_id#next_hop is the router sending the advertisement
-                row.cost += cost#cost to the router sending the advertisement + its own cost to reach dst
-                self.table[key] = row
+
+                if other_table[key].cost < 16: # Ignore routes with cost of 16
+                    row = other_table[key]
+                    row.next_hop = other_router_id#next_hop is the router sending the advertisement
+                    row.cost += cost#cost to the router sending the advertisement + its own cost to reach dst
+                    self.table[key] = row
+
+                    self.table[key].last_response_time = time.time()
+                    self.table[key].timer = 0.00
         self.print_table()
 
     def process_config_file(self, filename):
@@ -207,7 +226,7 @@ class RIP_Router():
                     self.output_ports = [int(x.split('-')[0]) for x in line[len("outputs "):].split(",")]     #7002
                     self.neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")]   #7002-1-1 (port,cost,id)
                     for i, entry in enumerate(self.neighbour_info):
-                        self.neighbours[int(entry[2])] = Neighbour()
+                        #self.neighbours[int(entry[2])] = Neighbour()
                         for j, number in enumerate(self.neighbour_info[i]):
                             self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
                     print("neighbour_info",self.neighbour_info)
@@ -268,15 +287,15 @@ class RIP_Router():
                 end = time.time()
                 #print(rlist, wlist, xlist)
                 delta_time = end - start
-                
-                #add time waited to each routes timer                
-                for key in self.neighbours.keys():
+
+                #add time waited to each routes timer
+                for key in self.table.keys():
                     if key != self.instance_id:#don't increase timer of own route
-                        self.neighbours[key].timer = time.time() - self.neighbours[key].last_response_time
-                        if self.neighbours[key].timer > TIMEOUT:
+                        self.table[key].timer = time.time() - self.table[key].last_response_time
+                        if self.table[key].timer > TIMEOUT:
                             self.table[key].cost = 16
-                
-                
+
+
                 #print('delta_time:',delta_time)
                 if len(rlist) != 0: #no timeout
                     print("received packets ready to be read in socket ids:",rlist)
@@ -294,7 +313,8 @@ class RIP_Router():
                         other_router_id, other_table = self.read_response(data)
                         self.update_table(other_router_id, other_table)
                 except Exception as e:#except to ignore the error
-                    #print(e)#[WinError 10054] An existing connection was forcibly closed
+                    print(e)
+                    #[WinError 10054] An existing connection was forcibly closed
                     pass
             except Exception as e:
                 print(e)
