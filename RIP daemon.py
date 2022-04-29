@@ -85,33 +85,91 @@ class RIP_Router():
         the demons internal routing table must not be initialized from the configuration
         file.
         '''
-        self.config_file = None
-        if os.path.isfile(filename):
-            try:
-                self.config_file = open(filename, 'r')
-            except Exception as e:
-                print("couldnt open", filename, e)
-                self.close()
-            config_text = self.config_file.read().split("\n")
-            self.config_file.close()
-            print("config file lines:",config_text)
-            for line in config_text:
-                line = line.lstrip()
-                if "router-id" in line:
-                    self.instance_id = int(line.split()[1])
-                elif "input-ports" in line:
-                    self.input_ports = [int(x) for x in line[len("input-ports"):].split(",")]
-                elif "outputs" in line:
-                    self.output_ports = [int(x.split('-')[0]) for x in line[len("outputs "):].split(",")]     #7002
-                    self.neighbour_info = [(x.split('-')) for x in line[len("outputs "):].split(",")]   #7002-1-1 (port,cost,id)
-                    for i, entry in enumerate(self.neighbour_info):
-                        #self.neighbours[int(entry[2])] = Neighbour()
-                        for j, number in enumerate(self.neighbour_info[i]):
-                            self.neighbour_info[i][j] = int(self.neighbour_info[i][j])
-                    print("neighbour_info",self.neighbour_info)
-        else:
-            print("couldnt find", filename)
-            self.close()
+        try:
+            lines = read_lines_from_file(filename)
+        except FileNotFoundError:
+            print("Couldn't find", filename)
+            sys.exit()
+        except OSError:
+            print("Error opening file")
+            sys.exit()
+
+        for line in lines:
+            line = line.strip()
+            if "router-id" in line:
+                id = line.split()[1]
+                if id.isdigit():
+                    id = int(id)
+                    if id >= 1 and id <= 64000:
+                        self.instance_id = id
+                    else:
+                        print(id, "is not a valid router ID (must be between 1 and 64000)")
+                        sys.exit()
+                else:
+                    print(id, "is not a valid router ID (non-integer)")
+                    sys.exit()
+
+            elif "input-ports" in line:
+                self.input_ports = []
+                for port in line[len("input-ports"):].split(","):
+                    port = port.strip()
+                    if not port.isdigit():
+                        print(port, "is not a valid port (non-integer)")
+                        sys.exit()
+                    port = int(port)
+                    if port < 1024 or port > 64000:
+                        print(port, "is not a valid port (must be between 1024 and 64000)")
+                        sys.exit()
+
+                    if port in self.input_ports:
+                        print(port, "can not occur more than once")
+                        sys.exit()
+
+                    self.input_ports.append(port)
+
+            elif "outputs" in line:
+                self.neighbour_info = []
+                output_ports = []
+                for link in line[len("outputs "):].split(","):
+                    try:
+                        port, cost, id = link.split("-")
+                    except ValueError:
+                        print(link, "does not follow the format (port-cost-id)")
+                        sys.exit()
+                    if not port.isdigit():
+                        print(port, "is not a valid port (non-integer)")
+                        sys.exit()
+
+                    port = int(port)
+                    if port < 1024 or port > 64000:
+                        print(port, "is not a valid port (must be between 1024 and 64000)")
+                        sys.exit()
+
+                    if port in self.input_ports or port in output_ports:
+                        print(port, "can not occur more than once")
+                        sys.exit()
+
+                    if not cost.isdigit():
+                        print(cost, "is not a valid cost (non-integer)")
+                        sys.exit()
+
+                    cost = int(cost)
+                    if cost < 1 or cost > 16:
+                        print(cost, "is not a valid cost (must be between 1 and 16)")
+                        sys.exit()
+
+                    if not id.isdigit():
+                        print(id, "is not a valid id (non-integer)")
+                        sys.exit()
+
+                    id = int(id)
+                    if id < 1 or id > 64000:
+                        print(id, "is not a valid id (must be between 1 and 64000)")
+                        sys.exit()
+
+                    self.neighbour_info.append((port, cost, id))
+                    output_ports.append(port) # So we can easily track duplicates
+
 
     def init_input_ports(self):
         '''
@@ -135,7 +193,7 @@ class RIP_Router():
 
     def print_table(self):
         print("Forwarding Table for {}".format(self.instance_id))
-        headings = ["Address", "Next Hop", "Cost", "timer"]
+        headings = ["Address", "Next Hop", "Cost", "Timer"]
         print((" | ").join(headings))
         print("-" * sum(len(heading) + 3 for heading in headings))
         for dest, row in sorted(self.table.items(), key=lambda x: x[0]):
@@ -322,6 +380,11 @@ class RIP_Router():
                 print(e)
                 self.close()
         self.close()
+
+def read_lines_from_file(filename):
+    with open(filename, 'r') as config_file:
+        return config_file.read().splitlines()
+
 
 def main():
     filename = ARGUEMENTS[0]
