@@ -33,6 +33,7 @@ class Row():
         self.next_hop = next_hop
         self.last_response_time = time.time()
         self.timer = 0
+        self.changed = True
 
     def __str__(self):
         return '(cost:'+str(self.cost)+', next_hop:'+str(self.next_hop)+')'
@@ -42,7 +43,6 @@ class Row():
 
 
 class RIP_Router():
-    #neighbours = {}         #dictionary with key=neighbour_router_id, value=Neighbour object
     table = {}              #dictionary with key=destination_router_id, value=Row object
     output_ports = None     #addr_port list of neighbour routers
     input_ports = None      #ports to receive packets from neighbour routers
@@ -54,8 +54,10 @@ class RIP_Router():
     garbage_time = 40      #how long until a forwarding table entry is removed since last update
     timeout = 20#180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
     periodic_update_time = 10
-    triggered_update_time = 5
-    triggered_update_timer = triggered_update_time
+
+    triggered_update_waiting = False
+    triggered_update_time = 0
+
 
     def close(self):
         print("Closing")
@@ -103,7 +105,7 @@ class RIP_Router():
     def print_table(self):
         print("\n" + "-" * 30)
         print("Forwarding Table for {}".format(self.instance_id))
-        headings = ["Address", "Next Hop", "Cost", "Timer"]
+        headings = ["Address", "Next Hop", "Cost", "Timer", "Change"]
         print((" | ").join(headings))
         print("-" * sum(len(heading) + 3 for heading in headings))
         for dest, row in sorted(self.table.items(), key=lambda x: x[0]):
@@ -113,14 +115,16 @@ class RIP_Router():
                 #print("test")
                 timer = f"{self.table[dest].timer:.2f}"
 
-            print("{} | {} | {} | {}".format(
+            print("{} | {} | {} | {} | {}".format(
                 str(dest).center(len(headings[0])),
                 str(row.next_hop).center(len(headings[1])),
                 str(row.cost).center(len(headings[2])),
-                str(timer).center(len(headings[3]))
+                str(timer).center(len(headings[3])),
+                str(row.changed).center(len(headings[4]))
             ))
 
-    def create_response(self, destination):
+
+    def create_response(self, destination, triggered=False):
         '''
         command(1) - version(1) - router_id(2)  #header(4)
 
@@ -138,30 +142,36 @@ class RIP_Router():
         header = command + version + router_id#zero2 #header uses router_id instead of 16bit zero
 
         payload = bytes()
-        for router_id in self.table.keys():#for each destination router_id
-            addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET
-            ipv4_addr = int(router_id).to_bytes(4, 'big')#next_hop is the router sending the response packet
-            zero4 = int(0).to_bytes(4, 'big')
 
-            if self.table[router_id].next_hop == destination:
-                metric = int(16).to_bytes(4, 'big')
-            else:
-                metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
+        for router_id in self.table.keys(): #for each destination router_id
+            if not triggered or self.table[router_id].changed:
+                addr_family_id = int(2).to_bytes(2, 'big')#2 = AF_INET
+                ipv4_addr = int(router_id).to_bytes(4, 'big')#next_hop is the router sending the response packet
+                zero4 = int(0).to_bytes(4, 'big')
 
-            payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
+                if self.table[router_id].next_hop == destination:
+                    metric = int(16).to_bytes(4, 'big')
+                else:
+                    metric = int(self.table[router_id].cost).to_bytes(4, 'big')#1-15
+
+                payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
+        print("Sent payload with length", len(payload))
         result = header + payload
         return result
 
-    def send_response(self, addr_id, addr_port):
+    def send_response(self, addr_id, addr_port, triggered=False):
         '''3.9.2 Response Messages'''
-        packet = self.create_response(addr_id)
+        packet = self.create_response(addr_id, triggered)
         target = (self.address, addr_port)
         self.input_sockets[0].sendto(bytes(packet),target)
 
-    def send_all_responses(self):
+    def send_all_responses(self, triggered=False):
         '''iterates all neighbour ports, and sends a response (advertisement) to each'''
+        self.triggered_update_waiting = False
         for output_port, cost, id in self.neighbour_info:
-            self.send_response(id, output_port)
+            self.send_response(id, output_port, triggered)
+        for row in self.table.values():
+            row.changed = False
 
     def read_response(self,data):
         '''convert the recvd packet to a table, returns rId(int), table(dict)'''
@@ -214,7 +224,6 @@ class RIP_Router():
     def update_table(self, other_router_id, other_table):
         '''compare tables and update if route is better'''
         cost = self.cost_to_neighbour(other_router_id)
-        send_triggered_update = False
         for dest in other_table.keys():
             #todo CHECK IF COST IS 16
             other_row = other_table[dest]
@@ -230,17 +239,14 @@ class RIP_Router():
                     if cost_changed:
                         self.update_row(dest, cost, other_row, other_router_id)
                         if cost + other_row.cost >= 16:
-                            send_triggered_update = True
+                            self.triggered_update_waiting = True
                     else:
                         if current_row.cost != 16:
-                            self.update_row(dest, cost, other_row, other_router_id)
+                            self.table[dest].last_response_time = time.time()
+                            self.table[dest].timer = 0.00
 
 
                     # Our current route comes from this router, so must take their value
-
-
-                    if cost_changed and cost + other_row.cost >= 16:
-                        send_triggered_update = True
 
                 elif current_row.cost > (other_row.cost + cost):
 
@@ -253,9 +259,6 @@ class RIP_Router():
                 if other_table[dest].cost + cost < 16: # Ignore routes with cost of 16
                     self.update_row(dest, cost, other_row, other_router_id)
 
-        if send_triggered_update and self.triggered_update_timer == 0:
-            self.triggered_update_timer = self.triggered_update_time
-            self.send_all_responses()
         self.print_table()
 
     def update_row(self, dest, cost, other_row, other_router_id):
@@ -292,7 +295,6 @@ class RIP_Router():
         #time_remaining_constant = 10
         #time_remaining = time_remaining_constant
         response_timer = self.periodic_update_time
-        triggered_update_timer = 5
 
         while True:
             try:
@@ -316,6 +318,8 @@ class RIP_Router():
                         self.table[key].timer = time.time() - self.table[key].last_response_time
                         if self.table[key].timer > self.timeout and self.table[key].cost != 16:
                             self.table[key].cost = 16
+                            self.table[key].changed = True
+                            self.triggered_update_waiting = True
                             self.print_table()
                         if self.table[key].timer > self.garbage_time:
                             routes_to_del.append(key)
@@ -323,6 +327,12 @@ class RIP_Router():
                 for route in routes_to_del:
                     del self.table[route]#removes entry from table
                     self.print_table()
+
+                if self.triggered_update_timer == 0 and self.triggered_update_waiting:
+                    self.send_all_responses(triggered=True)
+                    self.triggered_update_waiting = False
+                    self.triggered_update_timer = 1 + random.random() * 4
+                    print("Sent a triggered update!")
 
                 try:
                     '''reads responses (if any) from neighbours and updates tables'''
@@ -344,7 +354,7 @@ class RIP_Router():
                 delta_time = end - start
 
                 response_timer = max(0, response_timer - delta_time)
-                triggered_update_timer = max(0, triggered_update_timer - delta_time)
+                self.triggered_update_timer = max(0, self.triggered_update_timer - delta_time)
 
                 if PRETTY:
                     os.system("clear")
