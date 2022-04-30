@@ -17,6 +17,7 @@ and outputs = port addr to send to other routers
     e.g 5002=input port of router:4 with cost:5
 '''
 MAX_PACKET_SIZE = 4096
+PRETTY = True
 
 ARGUEMENTS = sys.argv[1:]
 if len(ARGUEMENTS) != 1:
@@ -58,6 +59,9 @@ class RIP_Router():
     neighbour_info = None   #info on links to neighbour routers [output_port, cost, router_id]
     garbage_time = 40      #how long until a forwarding table entry is removed since last update
     timeout = 20#180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
+    periodic_update_time = 10
+    triggered_update_time = 5
+    triggered_update_timer = triggered_update_time
 
     def close(self):
         print("Closing")
@@ -74,6 +78,7 @@ class RIP_Router():
         self.input_ports,
         self.neighbour_info,
         self.timeout) = parse_config_file(filename)
+        self.timeout = 20
 
         self.init_input_ports()
         self.table[self.instance_id] = Row(0,self.instance_id)#init table with own entry
@@ -102,6 +107,7 @@ class RIP_Router():
                 self.close()
 
     def print_table(self):
+        print("\n" + "-" * 30)
         print("Forwarding Table for {}".format(self.instance_id))
         headings = ["Address", "Next Hop", "Cost", "Timer"]
         print((" | ").join(headings))
@@ -253,7 +259,8 @@ class RIP_Router():
                 if other_table[dest].cost + cost < 16: # Ignore routes with cost of 16
                     self.update_row(dest, cost, other_row, other_router_id)
 
-        if send_triggered_update:
+        if send_triggered_update and self.triggered_update_timer == 0:
+            self.triggered_update_timer = self.triggered_update_time
             self.send_all_responses()
         self.print_table()
 
@@ -288,37 +295,39 @@ class RIP_Router():
 
         random_range = 2#should be 10 when we finished
 
-        time_remaining_constant = 10
-        time_remaining = time_remaining_constant
+        #time_remaining_constant = 10
+        #time_remaining = time_remaining_constant
+        response_timer = self.periodic_update_time
+        triggered_update_timer = 5
+
         while True:
             try:
+
                 start = time.time()
-                rlist, wlist, xlist = select.select(inputs, [], [], time_remaining)#blocks until at least one file descriptor is ready to r||w||x
-                end = time.time()
-                #print(rlist, wlist, xlist)
-                delta_time = end - start
+                rlist, wlist, xlist = select.select(inputs, [], [], 0.1 if PRETTY else 0)#blocks until at least one file descriptor is ready to r||w||x
+
+
+
+
+                if response_timer <= 0:
+                    response_timer = self.periodic_update_time + (random.random()*random_range) - random_range / 2
+                    self.send_all_responses()
+                    self.print_table()
+
 
                 #add time waited to each routes timer
                 routes_to_del = []
                 for key in self.table.keys():
                     if key != self.instance_id:#don't increase timer of own route
                         self.table[key].timer = time.time() - self.table[key].last_response_time
-                        if self.table[key].timer > self.timeout:
+                        if self.table[key].timer > self.timeout and self.table[key].cost != 16:
                             self.table[key].cost = 16
+                            self.print_table()
                         if self.table[key].timer > self.garbage_time:
                             routes_to_del.append(key)
+
                 for route in routes_to_del:
                     del self.table[route]#removes entry from table
-
-
-
-                #print('delta_time:',delta_time)
-                if len(rlist) != 0: #no timeout
-                    print("received packets ready to be read in socket ids:",rlist)
-                    time_remaining = max(0, time_remaining - delta_time)
-                else: #timeout
-                    time_remaining = time_remaining_constant + (random.random()*random_range) - random_range/2
-                    self.send_all_responses()
                     self.print_table()
 
                 try:
@@ -337,6 +346,17 @@ class RIP_Router():
                     print(e)
                     #[WinError 10054] An existing connection was forcibly closed
                     pass
+                end = time.time()
+                delta_time = end - start
+
+                response_timer = max(0, response_timer - delta_time)
+                triggered_update_timer = max(0, triggered_update_timer - delta_time)
+
+                if PRETTY:
+                    os.system("clear")
+                    self.print_table()
+
+
             except Exception as e:
                 print(e)
                 self.close()
