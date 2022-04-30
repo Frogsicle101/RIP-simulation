@@ -19,18 +19,12 @@ and outputs = port addr to send to other routers
 MAX_PACKET_SIZE = 4096
 PRETTY = True
 
-ARGUEMENTS = sys.argv[1:]
-if len(ARGUEMENTS) != 1:
-    ARGUEMENTS = ['config1.txt']
+ARGUMENTS = sys.argv[1:]
+if len(ARGUMENTS) != 1:
+    ARGUMENTS = ['config1.txt']
     #print("invalid arguements given, enter arguements in the form below")
     #print("filename")
     #sys.exit()
-
-class Neighbour():
-    '''neighbour'''
-    def __init__(self):
-        self.last_response_time = time.time()
-        self.timer = 0
 
 class Row():
     '''entry(value) in the routers forwarding table (dictionary) where the key is the destination router_id'''
@@ -364,7 +358,7 @@ class RIP_Router():
 
 
 def main():
-    filename = ARGUEMENTS[0]
+    filename = ARGUMENTS[0]
     router = RIP_Router(filename)
 
 main()
