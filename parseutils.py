@@ -44,6 +44,7 @@ def is_valid_port(port, existing_ports):
     """
     if is_valid_int(port, 1024, 64000, "port") and int(port) not in existing_ports:
         return True
+    print(port, "is a duplicate")
     sys.exit()
 
 def is_valid_link(link, existing_ports):
@@ -79,12 +80,15 @@ def parse_config_file(filename):
     input_ports = []
     neighbour_info = []
     timeout = 180
+    periodic_update_time = 30
+    garbage_time = 120
 
     for line in lines:
         line = line.strip()
+        line = line.split("#", 1)[0]
         if "router-id" in line:
             id = line.split()[1]
-            if is_valid_int(id, 1, 6400, "router_id"):
+            if is_valid_int(id, 1, 64000, "router_id"):
                 instance_id = int(id)
                 id_set = True
 
@@ -107,10 +111,21 @@ def parse_config_file(filename):
         elif "route-timeout" in line:
             if is_valid_int(line.split()[1], 1, float('inf'), "route timeout"):
                 timeout = int(line.split()[1])
+        elif "periodic-update-time" in line:
+            if is_valid_int(line.split()[1], 1, float('inf'), "periodic update time timeout"):
+                periodic_update_time = int(line.split()[1])
+        elif "garbage-time" in line:
+            if is_valid_int(line.split()[1], 1, float('inf'), "garbage time timeout"):
+                garbage_time = int(line.split()[1])
+        elif "" == line:
+            pass
+        else:
+            print("Could not process", line)
+            sys.exit()
 
 
 
     if not all((id_set, inputs_set, outputs_set)):
         print("Need all of router-id, input-ports, outputs")
         sys.exit()
-    return instance_id, input_ports, neighbour_info, timeout
+    return instance_id, input_ports, neighbour_info, timeout, periodic_update_time, garbage_time

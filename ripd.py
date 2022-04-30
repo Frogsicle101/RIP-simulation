@@ -51,12 +51,12 @@ class RIP_Router():
     address = None          #local computer addr
     instance_id = None      #router-id of running process
     neighbour_info = None   #info on links to neighbour routers [output_port, cost, router_id]
-    garbage_time = 40      #how long until a forwarding table entry is removed since last update
-    timeout = 20#180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
+    timeout = 20            #180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
+    garbage_time = timeout+40       #how long until a forwarding table entry is removed since last update
     periodic_update_time = 10
 
     triggered_update_waiting = False
-    triggered_update_time = 0
+    triggered_update_timer = 0
 
 
     def close(self):
@@ -73,9 +73,10 @@ class RIP_Router():
         (self.instance_id,
         self.input_ports,
         self.neighbour_info,
-        self.timeout) = parse_config_file(filename)
-        self.timeout = 20
-
+        self.timeout,
+        self.periodic_update_time,
+        self.garbage_time) = parse_config_file(filename)
+        self.garbage_time += self.timeout
         self.init_input_ports()
         self.table[self.instance_id] = Row(0,self.instance_id)#init table with own entry
         self.print_table()
@@ -157,7 +158,7 @@ class RIP_Router():
                 payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
         print("Sent payload with length", len(payload))
         result = header + payload
-        return result
+        return bytearray(result)
 
     def send_response(self, addr_id, addr_port, triggered=False):
         '''3.9.2 Response Messages'''
@@ -290,7 +291,7 @@ class RIP_Router():
 
         self.send_all_responses()
 
-        random_range = 2#should be 10 when we finished
+        random_range = self.periodic_update_time * 0.4
 
         #time_remaining_constant = 10
         #time_remaining = time_remaining_constant
@@ -300,13 +301,14 @@ class RIP_Router():
             try:
 
                 start = time.time()
-                rlist, wlist, xlist = select.select(inputs, [], [], 0.1 if PRETTY else 0)#blocks until at least one file descriptor is ready to r||w||x
+                rlist, wlist, xlist = select.select(inputs, [], [], 0.1 if PRETTY else 0.01)#blocks until at least one file descriptor is ready to r||w||x
 
 
 
 
                 if response_timer <= 0:
                     response_timer = self.periodic_update_time + (random.random()*random_range) - random_range / 2
+                    #print(response_timer)
                     self.send_all_responses()
                     self.print_table()
 
