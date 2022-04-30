@@ -19,7 +19,7 @@ def adjacency_list(graph_str):
     weighted = False
     if E:
         weighted = len(E[0]) > 2
-    
+
     #print("D:", directed, "n:", n, "W:", weighted)
     #print(E)
 
@@ -40,7 +40,7 @@ def adjacency_list(graph_str):
                 if not directed and end_vertex == i:
                     temp.append((start_vertex, weight))
         output.append(temp)
-    
+
     return output
 
 
@@ -60,7 +60,7 @@ def dijkstra(adj_list, start):
             if not in_tree[v] and (distance[u] + weight) < distance[v]:
                 distance[v] = distance[u] + weight
                 parent[v] = u
-                
+
     return parent, distance
 
 
@@ -75,7 +75,7 @@ def next_vertex(in_tree, distance):
                 d = i
     return d
 
-
+# 2nd number in top line is number vertices + 1
 graph_string = """\
 U 8 W
 1 2 1
@@ -95,8 +95,12 @@ U 8 W
 7 1 8
 7 4 6
 """
+import sys
+ARGUEMENTS = sys.argv[1:]
+source = int(ARGUEMENTS[0])
+print(source)
 
-parent, cost = (dijkstra(adjacency_list(graph_string), 2))#forwarding table for x
+parent, cost = (dijkstra(adjacency_list(graph_string), source))#forwarding table for x
 #print(parent[1:],cost[1:])#extra 0 vertex is included so must be removed
 print("parent (p) is the last hop to the target router addr (a)")
 print('a','p',"c (addr, parent(not next_hop), cost)")
@@ -105,4 +109,3 @@ for i in range(1,len(cost)):
     if p == None:
         p = ' '
     print(i,p,cost[i])
-
