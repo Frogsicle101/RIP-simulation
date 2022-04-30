@@ -5,10 +5,27 @@ A collection of functions used in parsing the router config files
 import sys
 
 def read_lines_from_file(filename):
-    with open(filename, 'r') as config_file:
-        return config_file.read().splitlines()
+	"""
+	Opens a file and reads the lines, returning a list of strings.
+	If the file cannot be found or there is an error, prints a message then calls
+	sys.exit
+	"""
+	try:
+		with open(filename, 'r') as config_file:
+	        return config_file.read().splitlines()
+	except FileNotFoundError:
+		print("Couldn't find", filename)
+		sys.exit()
+	except OSError:
+		print("Error opening file")
+		sys.exit()
 
 def is_valid_int(val, min, max, name):
+	"""
+	Checks that the given string is a valid integer between min and max
+	If it is not, prints a message using name, and then calls sys.exit
+	"""
+
     if val.isdigit():
         val = int(val)
         if val >= min and val <= max:
@@ -21,10 +38,19 @@ def is_valid_int(val, min, max, name):
         sys.exit()
 
 def is_valid_port(port, existing_ports):
+	"""
+	Checks that the given value is an integer, within the acceptable range,
+	and not in the list of existing input_ports. Calls sys.exit if not.
+	"""
 	if is_valid_int(port, 1024, 64000, "port") and int(port) not in existing_ports:
 		return True
+	sys.exit()
 
 def is_valid_link(link, existing_ports):
+	"""
+	Checks if a link (port-metric-id) is valid and formatted correctly. If not,
+	calls sys.exit
+	"""
 	try:
 		port, cost, id = link.strip().split("-")
 	except ValueError:
@@ -41,15 +67,10 @@ def is_valid_link(link, existing_ports):
 def parse_config_file(filename):
 	"""
 	Reads a file as described in the assignment description and returns a tuple
+	with instance_id, input_ports, neighbour_info, and the timeout values
 	"""
-	try:
-		lines = read_lines_from_file(filename)
-	except FileNotFoundError:
-		print("Couldn't find", filename)
-		sys.exit()
-	except OSError:
-		print("Error opening file")
-		sys.exit()
+	lines = read_lines_from_file(filename)
+
 
 	id_set = False
 	inputs_set = False
