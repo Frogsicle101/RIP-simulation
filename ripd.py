@@ -17,7 +17,7 @@ and outputs = port addr to send to other routers
     e.g 5002=input port of router:4 with cost:5
 '''
 MAX_PACKET_SIZE = 4096
-TIMEOUT = 20#180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
+
 ARGUEMENTS = sys.argv[1:]
 if len(ARGUEMENTS) != 1:
     ARGUEMENTS = ['config1.txt']
@@ -56,6 +56,8 @@ class RIP_Router():
     address = None          #local computer addr
     instance_id = None      #router-id of running process
     neighbour_info = None   #info on links to neighbour routers [output_port, cost, router_id]
+    garbage_time = 40      #how long until a forwarding table entry is removed since last update
+    timeout = 20#180 #time (s) while no responses have been received from a neighbouring router to confirm its failure
 
     def close(self):
         print("Closing")
@@ -67,11 +69,11 @@ class RIP_Router():
         sys.exit()
 
     def __init__(self, filename):
-        file_data = parse_config_file(filename)
+
         (self.instance_id,
         self.input_ports,
         self.neighbour_info,
-        timeout) = file_data
+        self.timeout) = parse_config_file(filename)
 
         self.init_input_ports()
         self.table[self.instance_id] = Row(0,self.instance_id)#init table with own entry
@@ -212,34 +214,55 @@ class RIP_Router():
     def update_table(self, other_router_id, other_table):
         '''compare tables and update if route is better'''
         cost = self.cost_to_neighbour(other_router_id)
-        for key in other_table.keys():
+        send_triggered_update = False
+        for dest in other_table.keys():
             #todo CHECK IF COST IS 16
+            other_row = other_table[dest]
 
-            try:#a route to this dst (key) already exists, so perform checks
-                #check if other_table has better route
-                current_row = self.table[key]
-                other_row = other_table[key]
+            try:
 
-                better_cost = current_row.cost >= (other_row.cost + cost)
+                current_row = self.table[dest]
 
-                if better_cost:#current route less optimal than jump_to_neighbour + neighbours_route
-                    #print(f"dst:{key}, me:{self.instance_id}-{current_row}, other:{other_router_id}-{other_row} {cost}")
-                    self.table[key].last_response_time = time.time()
-                    self.table[key].timer = 0.00
-                    row = Row(other_row.cost + cost, other_router_id)
-                    self.table[key] = row
+                from_authority = self.table[dest].next_hop == other_router_id
+                cost_changed = current_row.cost != min(16, other_row.cost + cost)
 
-            except KeyError:#means we currently do not have a route to this dst (key)
+                if from_authority:
+                    if cost_changed:
+                        self.update_row(dest, cost, other_row, other_router_id)
+                        if cost + other_row.cost >= 16:
+                            send_triggered_update = True
+                    else:
+                        if current_row.cost != 16:
+                            self.update_row(dest, cost, other_row, other_router_id)
 
-                if other_table[key].cost + cost < 16: # Ignore routes with cost of 16
-                    row = other_table[key]
-                    row.next_hop = other_router_id#next_hop is the router sending the advertisement
-                    row.cost += cost#cost to the router sending the advertisement + its own cost to reach dst
-                    self.table[key] = row
 
-                    self.table[key].last_response_time = time.time()
-                    self.table[key].timer = 0.00
+                    # Our current route comes from this router, so must take their value
+
+
+                    if cost_changed and cost + other_row.cost >= 16:
+                        send_triggered_update = True
+
+                elif current_row.cost > (other_row.cost + cost):
+
+                    #current route less optimal than jump_to_neighbour + neighbours_route
+
+                    self.update_row(dest, cost, other_row, other_router_id)
+
+            except KeyError:#means we currently do not have a route to this dst (dest)
+
+                if other_table[dest].cost + cost < 16: # Ignore routes with cost of 16
+                    self.update_row(dest, cost, other_row, other_router_id)
+
+        if send_triggered_update:
+            self.send_all_responses()
         self.print_table()
+
+    def update_row(self, dest, cost, other_row, other_router_id):
+        row = Row(min(16, other_row.cost + cost), other_router_id)
+        self.table[dest] = row
+
+        self.table[dest].last_response_time = time.time()
+        self.table[dest].timer = 0.00
 
     def run(self):
         '''
@@ -276,17 +299,23 @@ class RIP_Router():
                 delta_time = end - start
 
                 #add time waited to each routes timer
+                routes_to_del = []
                 for key in self.table.keys():
                     if key != self.instance_id:#don't increase timer of own route
                         self.table[key].timer = time.time() - self.table[key].last_response_time
-                        if self.table[key].timer > TIMEOUT:
+                        if self.table[key].timer > self.timeout:
                             self.table[key].cost = 16
+                        if self.table[key].timer > self.garbage_time:
+                            routes_to_del.append(key)
+                for route in routes_to_del:
+                    del self.table[route]#removes entry from table
+
 
 
                 #print('delta_time:',delta_time)
                 if len(rlist) != 0: #no timeout
                     print("received packets ready to be read in socket ids:",rlist)
-                    time_remaining -= delta_time
+                    time_remaining = max(0, time_remaining - delta_time)
                 else: #timeout
                     time_remaining = time_remaining_constant + (random.random()*random_range) - random_range/2
                     self.send_all_responses()
@@ -298,6 +327,7 @@ class RIP_Router():
                         sock = socket.fromfd(socket_id,socket.AF_INET, socket.SOCK_DGRAM)
                         data = sock.recv(MAX_PACKET_SIZE)
                         packet_valid, other_router_id, other_table = self.read_response(data)
+                        print("Received packet from", other_router_id)
                         if packet_valid:
                             self.update_table(other_router_id, other_table)
                         else:
