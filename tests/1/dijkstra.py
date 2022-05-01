@@ -75,6 +75,13 @@ def next_vertex(in_tree, distance):
                 d = i
     return d
 
+def next_hop(parent, start):
+    if parent[start] == None:
+        return start
+    elif parent[parent[start]] == None:
+        return start
+    return next_hop(parent,parent[start])
+
 # 2nd number in top line is number vertices + 1
 graph_string = """\
 U 8 W
@@ -101,11 +108,11 @@ source = int(ARGUEMENTS[0])
 print(source)
 
 parent, cost = (dijkstra(adjacency_list(graph_string), source))#forwarding table for x
-#print(parent[1:],cost[1:])#extra 0 vertex is included so must be removed
+print(parent[1:],cost[1:])#extra 0 vertex is included so must be removed
 print("parent (p) is the last hop to the target router addr (a)")
 print('a','p',"c (addr, parent(not next_hop), cost)")
 for i in range(1,len(cost)):
     p = parent[i]
     if p == None:
         p = ' '
-    print(i,p,cost[i])
+    print(i,next_hop(parent,i),cost[i])
