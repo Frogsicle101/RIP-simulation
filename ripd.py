@@ -9,7 +9,7 @@ Frederik Markwell (fma107) 51118501
 import socket, os, sys, select, time, random
 from parseutils import parse_config_file
 
-# Sets the maxium size packet that the router can recieve
+# Sets the maximum size packet that the router can receive
 MAX_PACKET_SIZE = 4096
 
 # Changes how the router prints out its table. If PRETTY, prints as often as
@@ -265,7 +265,7 @@ class RIP_Router():
             2. The route comes from the router from which the the old route
                 came (here called the authority)
         When a route is updated, the timer on that route is also updated. Timers
-        are not updated if the autority repeatedly reports that the cost is 16
+        are not updated if the authority repeatedly reports that the cost is 16
         (so that route may timeout)
         """
         cost = self.cost_to_neighbour(other_router_id)

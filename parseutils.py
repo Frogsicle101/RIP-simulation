@@ -1,5 +1,8 @@
 """
 A collection of functions used in parsing the router config files
+
+Christopher Stewart (cst141) 21069553
+Frederik Markwell (fma107) 51118501
 """
 
 import sys
