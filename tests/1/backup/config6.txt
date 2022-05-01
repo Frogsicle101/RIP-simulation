@@ -1,0 +1,6 @@
+router-id 6
+input-ports 6001, 6002
+outputs 10003-5-1, 5002-1-5
+route-timeout 5
+periodic-update-time 1
+garbage-time 4

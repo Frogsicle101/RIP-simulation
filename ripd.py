@@ -158,7 +158,7 @@ class RIP_Router():
         version = int(2).to_bytes(1, 'big')
         router_id = int(self.instance_id).to_bytes(2, 'big')
         zero2 = int(0).to_bytes(2, 'big')
-        header = command + version + router_id #header uses router_id instead of 16bit zero
+        header = command + version + router_id # header uses router_id instead of 16bit zero
 
         payload = bytes()
         for router_id in self.table.keys(): # for each destination router_id
@@ -177,7 +177,6 @@ class RIP_Router():
                     # No need to poison
                     metric = int(self.table[router_id].cost).to_bytes(4, 'big')
                 payload += addr_family_id + zero2 + ipv4_addr + zero4 + zero4 + metric
-
         result = header + payload
         return bytearray(result)
 
